@@ -23,7 +23,31 @@ python app.py
 
 Open http://localhost:5000 and start renaming.
 
-## How it works
+## CLI Usage
+
+You can also rename PDFs directly from the terminal:
+
+```bash
+# Scan a directory and interactively approve renames
+python renamer.py /path/to/pdfs
+
+# Auto-approve all renames without prompting
+python renamer.py /path/to/pdfs --yes
+
+# Preview proposed renames without changing anything
+python renamer.py /path/to/pdfs --dry-run
+
+# Use a specific naming template
+python renamer.py --template journal /path/to/pdfs
+
+# View rename history
+python renamer.py --history
+
+# Undo all renames from a session
+python renamer.py --undo 20250301_143022
+```
+
+## How it works (Web UI)
 
 1. Enter a directory path and click **Scan**.
 2. The tool extracts DOIs/ISBNs from each PDF, queries academic APIs, and proposes clean filenames.
