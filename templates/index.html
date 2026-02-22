@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Renamer</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>PDF Renamer</h1>
+    <nav>
+      <button class="nav-btn active" data-panel="main">Rename</button>
+      <button class="nav-btn" data-panel="history">History</button>
+      <button class="nav-btn" data-panel="settings">Settings</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Main Panel -->
+    <section id="panel-main" class="panel active">
+      <div class="controls">
+        <div class="input-group">
+          <label for="dir-input">Directory</label>
+          <div class="input-row">
+            <input type="text" id="dir-input" placeholder="/path/to/pdfs">
+            <button id="scan-btn" class="btn-primary">Scan</button>
+          </div>
+        </div>
+        <div class="input-group">
+          <label for="template-select">Naming Template</label>
+          <div class="input-row">
+            <select id="template-select">
+              <option value="standard">{author} - {title} ({year})</option>
+              <option value="journal">{author} - {title} - {journal} ({year})</option>
+              <option value="year_first">{year} - {author} - {title}</option>
+              <option value="compact">{author}_{year}_{title}</option>
+              <option value="custom">Custom...</option>
+            </select>
+            <input type="text" id="custom-template" placeholder="{author} - {title} ({year})" class="hidden">
+          </div>
+        </div>
+      </div>
+
+      <div id="scan-status" class="status-bar hidden"></div>
+
+      <div id="results-section" class="hidden">
+        <div class="results-toolbar">
+          <div class="bulk-actions">
+            <label class="checkbox-label">
+              <input type="checkbox" id="select-all"> Select All
+            </label>
+            <button id="execute-btn" class="btn-primary" disabled>Rename Selected</button>
+            <button id="undo-last-btn" class="btn-secondary hidden">Undo Last Session</button>
+          </div>
+          <span id="file-count" class="file-count"></span>
+        </div>
+        <div class="table-wrap">
+          <table id="results-table">
+            <thead>
+              <tr>
+                <th class="col-check"><input type="checkbox" id="header-check"></th>
+                <th>Original Name</th>
+                <th>Proposed Name</th>
+                <th>Source</th>
+                <th>Confidence</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="results-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- History Panel -->
+    <section id="panel-history" class="panel">
+      <div class="panel-header">
+        <h2>Rename History</h2>
+        <button id="refresh-history" class="btn-secondary">Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table id="history-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Original</th>
+              <th>Renamed To</th>
+              <th>Source</th>
+              <th>Time</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Settings Panel -->
+    <section id="panel-settings" class="panel">
+      <h2>Settings</h2>
+      <form id="settings-form">
+        <fieldset>
+          <legend>Zotero Integration</legend>
+          <div class="form-group">
+            <label for="zotero-api-key">API Key</label>
+            <input type="password" id="zotero-api-key" placeholder="Enter Zotero API key">
+          </div>
+          <div class="form-group">
+            <label for="zotero-library-id">Library ID</label>
+            <input type="text" id="zotero-library-id" placeholder="e.g. 12345">
+          </div>
+          <div class="form-group">
+            <label for="zotero-library-type">Library Type</label>
+            <select id="zotero-library-type">
+              <option value="user">User</option>
+              <option value="group">Group</option>
+            </select>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Naming Preferences</legend>
+          <div class="form-group">
+            <label for="settings-template">Default Template</label>
+            <select id="settings-template">
+              <option value="standard">Standard: {author} - {title} ({year})</option>
+              <option value="journal">Journal: {author} - {title} - {journal} ({year})</option>
+              <option value="year_first">Year First: {year} - {author} - {title}</option>
+              <option value="compact">Compact: {author}_{year}_{title}</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="settings-custom-template">Custom Template</label>
+            <input type="text" id="settings-custom-template" placeholder="{author} - {title} ({year})">
+            <small>Variables: {author}, {title}, {year}, {journal}, {publisher}</small>
+          </div>
+        </fieldset>
+        <button type="submit" class="btn-primary">Save Settings</button>
+        <span id="settings-status" class="status-msg"></span>
+      </form>
+    </section>
+  </main>
+
+  <div id="toast-container"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

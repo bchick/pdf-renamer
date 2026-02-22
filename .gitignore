@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# User data (settings with API keys, rename logs with local paths)
+data/settings.json
+data/rename_log.json
+
+# PDF files — users supply their own
+papers/
+
+# Environment
+.env
+.venv/
+venv/
+
+# Claude Code local settings
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
