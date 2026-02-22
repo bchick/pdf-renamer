@@ -2,8 +2,6 @@
 
 **Stop wasting time renaming papers by hand.** Point this tool at a folder of PDFs and it automatically identifies each paper's title, authors, year, and journal — then renames everything in seconds with clean, consistent filenames.
 
-Built for researchers who accumulate hundreds of `10.1016_j.cell.2024.01.pdf` files and just want them to say `Smith - Cortical Dynamics in Mice (2024).pdf`.
-
 ## Why use this?
 
 - **It just works** — drop in a directory path, click Scan, done.
