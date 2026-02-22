@@ -687,3 +687,164 @@ def execute_renames(files, session_id=None):
             results.append({"original": str(original), "error": str(e)})
 
     return {"results": results, "session_id": session_id}
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Batch-rename PDFs using metadata from academic APIs.",
+    )
+    parser.add_argument(
+        "directory", nargs="?", default=None,
+        help="Directory containing PDF files to rename",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Show proposed renames without executing them",
+    )
+    parser.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Rename all files without prompting for confirmation",
+    )
+    parser.add_argument(
+        "--template", choices=list(TEMPLATE_PRESETS.keys()),
+        default=None,
+        help="Naming template preset (default: from settings or 'standard')",
+    )
+    parser.add_argument(
+        "--history", action="store_true",
+        help="Show rename history and exit",
+    )
+    parser.add_argument(
+        "--undo", metavar="SESSION_ID",
+        help="Undo all renames from a given session ID",
+    )
+
+    args = parser.parse_args()
+
+    # --- History mode ---
+    if args.history:
+        entries = get_history()
+        if not entries:
+            print("No rename history.")
+            return
+        # Group by session
+        sessions = {}
+        for e in entries:
+            sid = e["session_id"]
+            sessions.setdefault(sid, []).append(e)
+        for sid, items in sessions.items():
+            ts = items[0].get("timestamp", "")[:19]
+            undone_count = sum(1 for i in items if i.get("undone"))
+            status = f" (all undone)" if undone_count == len(items) else (
+                f" ({undone_count} undone)" if undone_count else "")
+            print(f"\nSession {sid}  [{ts}]  {len(items)} file(s){status}")
+            for i in items:
+                flag = " [undone]" if i.get("undone") else ""
+                orig = os.path.basename(i["original_path"])
+                new = os.path.basename(i["new_path"])
+                print(f"  {orig}  ->  {new}{flag}")
+        return
+
+    # --- Undo mode ---
+    if args.undo:
+        results = undo_session(args.undo)
+        if not results:
+            print(f"No renames found for session '{args.undo}' (or already undone).")
+            return
+        for r in results:
+            if r.get("success"):
+                print(f"Restored: {r['restored']}")
+            else:
+                print(f"Error: {r.get('error')}")
+        return
+
+    # --- Scan / Rename mode ---
+    if not args.directory:
+        parser.error("a directory is required (unless using --history or --undo)")
+
+    directory = os.path.abspath(args.directory)
+    if not os.path.isdir(directory):
+        parser.error(f"not a directory: {directory}")
+
+    print(f"Scanning {directory} ...")
+    result = scan_directory(directory, template=args.template)
+
+    if "error" in result:
+        print(f"Error: {result['error']}")
+        return
+
+    files = result["files"]
+    if not files:
+        print("No PDF files found.")
+        return
+
+    # Display proposals table
+    name_changed = []
+    skipped = 0
+    for f in files:
+        orig = f["original_name"]
+        proposed = f["proposed_name"]
+        conf = f["confidence"]
+        src = f["source"]
+        if orig == proposed:
+            skipped += 1
+            continue
+        name_changed.append(f)
+        marker = "*" if conf < 0.5 else " "
+        print(f"  {marker} {orig}")
+        print(f"    -> {proposed}  [{src}, {conf:.0%}]")
+
+    if skipped:
+        print(f"\n  ({skipped} file(s) already named correctly)")
+
+    if not name_changed:
+        print("\nNothing to rename.")
+        return
+
+    print(f"\n{len(name_changed)} file(s) to rename.")
+
+    if args.dry_run:
+        return
+
+    # Prompt unless --yes
+    if not args.yes:
+        try:
+            answer = input("\nProceed? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
+            return
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return
+
+    # Build rename list
+    rename_list = [
+        {
+            "original_path": f["original_path"],
+            "new_name": f["proposed_name"],
+            "source": f["source"],
+            "metadata": f["metadata"],
+        }
+        for f in name_changed
+    ]
+    result = execute_renames(rename_list)
+    session_id = result["session_id"]
+
+    successes = sum(1 for r in result["results"] if r.get("success"))
+    errors = sum(1 for r in result["results"] if r.get("error"))
+    print(f"\nDone. {successes} renamed, {errors} error(s). Session: {session_id}")
+
+    if errors:
+        for r in result["results"]:
+            if r.get("error"):
+                print(f"  Error: {os.path.basename(r['original'])} — {r['error']}")
+
+
+if __name__ == "__main__":
+    main()
