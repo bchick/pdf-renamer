@@ -12,40 +12,55 @@
 - **Confidence scores** — see at a glance how reliable each metadata match is.
 - **Flexible naming** — four built-in templates or define your own with `{author}`, `{title}`, `{year}`, `{journal}`, `{publisher}`.
 
+## Install
+
+The easiest way is with [pipx](https://pipx.pypa.io/), which installs the `pdf-renamer` command in its own isolated environment:
+
+```bash
+pipx install git+https://github.com/bchick/pdf-renamer.git
+```
+
+(Plain `pip install git+https://github.com/bchick/pdf-renamer.git` works too.)
+
 ## Quick Start
 
 ```bash
-git clone <repo-url> && cd pdf-renamer
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python app.py
+# Preview proposed names without changing anything
+pdf-renamer ~/Papers --dry-run
+
+# Review the proposals and confirm
+pdf-renamer ~/Papers
 ```
 
-Open http://localhost:5000 and start renaming.
+Prefer a point-and-click interface? Run `pdf-renamer --web` and your browser opens the web UI.
 
 ## CLI Usage
 
-You can also rename PDFs directly from the terminal:
-
 ```bash
 # Scan a directory and interactively approve renames
-python renamer.py /path/to/pdfs
+pdf-renamer /path/to/pdfs
 
 # Auto-approve all renames without prompting
-python renamer.py /path/to/pdfs --yes
+pdf-renamer /path/to/pdfs --yes
 
 # Preview proposed renames without changing anything
-python renamer.py /path/to/pdfs --dry-run
+pdf-renamer /path/to/pdfs --dry-run
 
 # Use a specific naming template
-python renamer.py --template journal /path/to/pdfs
+pdf-renamer /path/to/pdfs --template journal
 
 # View rename history
-python renamer.py --history
+pdf-renamer --history
 
 # Undo all renames from a session
-python renamer.py --undo 20250301_143022
+pdf-renamer --undo 20250301_143022
+
+# Launch the web UI (opens your browser)
+pdf-renamer --web
+pdf-renamer --web --port 8080 --no-browser
 ```
+
+Run `pdf-renamer --help` for all options.
 
 ## How it works (Web UI)
 
@@ -74,9 +89,17 @@ Or define a custom template using any combination of `{author}`, `{title}`, `{ye
 
 ## Configuration
 
-Settings are stored locally in `data/settings.json` (auto-created on first save, git-ignored). See `data/settings.example.json` for the format.
+Settings (`settings.json`) and rename history (`rename_log.json`) are stored in a per-user data directory:
 
-You can also configure the Flask server via environment variables:
+| OS | Location |
+|---|---|
+| Linux | `~/.local/share/pdf-renamer/` (or `$XDG_DATA_HOME/pdf-renamer/`) |
+| macOS | `~/Library/Application Support/pdf-renamer/` |
+| Windows | `%APPDATA%\pdf-renamer\` |
+
+`pdf-renamer --help` prints the exact path. Set `PDF_RENAMER_DATA_DIR` to use a different location. If you run from a git checkout that already has a `data/` folder from an older version, that folder keeps being used so your history is preserved. See `data/settings.example.json` for the settings format.
+
+You can also configure the web server via environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -84,22 +107,29 @@ You can also configure the Flask server via environment variables:
 | `FLASK_HOST` | `127.0.0.1` | Bind address |
 | `FLASK_PORT` | `5000` | Port number |
 
+## Development
+
+```bash
+git clone https://github.com/bchick/pdf-renamer.git && cd pdf-renamer
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+pdf-renamer --help
+```
+
+`python renamer.py ...` and `python app.py` still work from a checkout.
+
 ## Project Structure
 
 ```
 pdf-renamer/
-  app.py              Flask web server and API routes
-  renamer.py          Core logic: PDF extraction, API lookups, renaming
-  requirements.txt    Python dependencies
-  templates/
-    index.html        Single-page web UI
-  static/
-    style.css         Styles
-    app.js            Frontend logic
-  data/
-    settings.example.json   Settings template
-    settings.json           Your settings (auto-created, git-ignored)
-    rename_log.json         Rename history (auto-created, git-ignored)
+  pyproject.toml        Packaging and the `pdf-renamer` command
+  pdf_renamer/
+    renamer.py          Core logic (PDF extraction, API lookups, renaming) and CLI
+    app.py              Flask web server and API routes
+    templates/index.html  Single-page web UI
+    static/             Styles and frontend logic
+  renamer.py, app.py    Shims for running from a checkout
+  data/settings.example.json   Settings template
 ```
 
 ## Requirements

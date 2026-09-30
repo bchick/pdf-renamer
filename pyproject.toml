@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-renamer"
+dynamic = ["version"]
+description = "Batch-rename academic PDFs using metadata from CrossRef, Semantic Scholar, and more"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Brent Chick" }]
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+    "pymupdf>=1.24",
+    "requests>=2.31",
+]
+
+[project.scripts]
+pdf-renamer = "pdf_renamer.renamer:main"
+
+[tool.setuptools]
+packages = ["pdf_renamer"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pdf_renamer.__version__" }
+
+[tool.setuptools.package-data]
+pdf_renamer = ["templates/*", "static/*"]
