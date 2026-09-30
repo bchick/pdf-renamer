@@ -47,7 +47,8 @@ async function doScan() {
   try {
     const tplKey = $('#template-select').value;
     const tplValue = tplKey === 'custom' ? $('#custom-template').value.trim() : tplKey;
-    const res = await api('/scan', { directory: dir, template: tplValue });
+    const recursive = $('#recursive-check').checked;
+    const res = await api('/scan', { directory: dir, template: tplValue, recursive });
     if (res.error) throw new Error(res.error);
 
     scanResults = res.files || [];

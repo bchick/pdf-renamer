@@ -22,7 +22,8 @@ def scan():
     if not os.path.isdir(directory):
         return jsonify({"error": f"Directory not found: {directory}"}), 404
     template = data.get("template")
-    result = renamer.scan_directory(directory, template=template)
+    recursive = bool(data.get("recursive"))
+    result = renamer.scan_directory(directory, template=template, recursive=recursive)
     if "error" in result:
         return jsonify(result), 400
     return jsonify(result)

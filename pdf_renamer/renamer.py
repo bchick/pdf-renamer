@@ -4,9 +4,11 @@ import json
 import os
 import re
 import shutil
+import string
 import sys
 import time
 import unicodedata
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,12 +50,12 @@ CROSSREF_API = "https://api.crossref.org"
 SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1"
 OPEN_LIBRARY_API = "https://openlibrary.org"
 GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1"
+ARXIV_API = "https://export.arxiv.org/api/query"
 ZOTERO_API = "https://api.zotero.org"
 
+PROJECT_URL = "https://github.com/bchick/pdf-renamer"
+
 SESSION = requests.Session()
-SESSION.headers.update({
-    "User-Agent": "pdf-renamer/1.0 (https://github.com/pdf-renamer; mailto:pdf-renamer@example.com)"
-})
 
 TEMPLATE_PRESETS = {
     "standard": "{author} - {title} ({year})",
@@ -61,6 +63,7 @@ TEMPLATE_PRESETS = {
     "year_first": "{year} - {author} - {title}",
     "compact": "{author}_{year}_{title}",
 }
+TEMPLATE_FIELDS = ("author", "title", "year", "journal", "publisher")
 
 DOI_PATTERN = re.compile(
     r'(10\.\d{4,9}/[^\s,;"\'\]}>]+)', re.IGNORECASE
@@ -68,6 +71,12 @@ DOI_PATTERN = re.compile(
 ISBN_PATTERN = re.compile(
     r'(?:ISBN[-:]?\s*)((?:97[89][-\s]?)?(?:\d[-\s]?){9}[\dXx])', re.IGNORECASE
 )
+# New-style (1706.03762) and old-style (hep-th/9901001) arXiv identifiers
+ARXIV_ID_PATTERN = re.compile(
+    r'arXiv:\s*(\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?', re.IGNORECASE
+)
+ARXIV_FILENAME_PATTERN = re.compile(r'^(\d{4}\.\d{4,5})(?:v\d+)?$')
+ARXIV_DOI_PATTERN = re.compile(r'^10\.48550/arxiv\.(.+)$', re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +92,7 @@ def load_settings():
         "zotero_library_type": "user",
         "template": "standard",
         "custom_template": "",
+        "contact_email": "",
     }
 
 
@@ -91,7 +101,25 @@ def save_settings(settings):
     current = load_settings()
     current.update(settings)
     SETTINGS_FILE.write_text(json.dumps(current, indent=2))
+    _update_user_agent(current)
     return current
+
+
+def _update_user_agent(settings=None):
+    """Identify ourselves to the APIs.
+
+    CrossRef routes requests that include a contact email to its faster
+    "polite" pool, so one is added when configured.
+    """
+    settings = settings if settings is not None else load_settings()
+    contact = os.environ.get("PDF_RENAMER_EMAIL") or settings.get("contact_email", "")
+    ua = f"pdf-renamer/{__version__} ({PROJECT_URL}"
+    if contact:
+        ua += f"; mailto:{contact}"
+    SESSION.headers["User-Agent"] = ua + ")"
+
+
+_update_user_agent()
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +195,9 @@ def extract_pdf_info(pdf_path):
     result = {
         "doi": None,
         "isbn": None,
+        "arxiv_id": None,
+        "arxiv_id_from_text": False,
+        "first_page_text": "",
         "title_guess": None,
         "text_snippet": "",
         "pdf_metadata": {},
@@ -188,6 +219,7 @@ def extract_pdf_info(pdf_path):
         text_parts.append(page.get_text())
     full_text = "\n".join(text_parts)
     result["text_snippet"] = full_text[:3000]
+    result["first_page_text"] = text_parts[0] if text_parts else ""
 
     doc.close()
 
@@ -212,6 +244,24 @@ def extract_pdf_info(pdf_path):
         m = DOI_PATTERN.search(os.path.basename(pdf_path))
         if m:
             result["doi"] = _clean_doi(m.group(1))
+
+    # --- arXiv ID extraction ---
+    # arXiv DOIs are registered with DataCite, not CrossRef, so they are
+    # resolved through the arXiv API instead.
+    stem = os.path.splitext(os.path.basename(pdf_path))[0]
+    m = ARXIV_FILENAME_PATTERN.match(stem)
+    if m:
+        result["arxiv_id"] = m.group(1)
+    elif result["doi"] and ARXIV_DOI_PATTERN.match(result["doi"]):
+        result["arxiv_id"] = ARXIV_DOI_PATTERN.match(result["doi"]).group(1)
+    else:
+        # Only the first page: later pages may cite other arXiv papers.
+        m = ARXIV_ID_PATTERN.search(result["first_page_text"])
+        if m:
+            result["arxiv_id"] = m.group(1)
+            result["arxiv_id_from_text"] = True
+    if result["arxiv_id"] and result["doi"] and ARXIV_DOI_PATTERN.match(result["doi"]):
+        result["doi"] = None
 
     # --- ISBN extraction ---
     m = ISBN_PATTERN.search(full_text)
@@ -257,7 +307,7 @@ def crossref_search_title(title):
     try:
         r = SESSION.get(
             f"{CROSSREF_API}/works",
-            params={"query.title": title, "rows": 3},
+            params={"query.title": title, "rows": 5},
             timeout=10,
         )
         if r.status_code != 200:
@@ -265,8 +315,11 @@ def crossref_search_title(title):
         items = r.json().get("message", {}).get("items", [])
         if not items:
             return None
-        # Return best match
-        best = items[0]
+        # Popular papers often have reposts and book chapters with the same
+        # title, so prefer an exact-title journal/proceedings article.
+        exact = [i for i in items if _normalize_title((i.get("title") or [""])[0]) == _normalize_title(title)]
+        articles = [i for i in exact if i.get("type") in ("journal-article", "proceedings-article")]
+        best = (articles or exact or items)[0]
         result = _parse_crossref_item(best)
         # Compute a basic confidence score
         result_title = result.get("title", "").lower()
@@ -277,10 +330,18 @@ def crossref_search_title(title):
             words_r = set(result_title.split())
             if words_q:
                 overlap = len(words_q & words_r) / len(words_q)
-                result["confidence"] = round(overlap, 2)
+                # Cap below 1.0: a title match is never as certain as a DOI
+                result["confidence"] = round(min(overlap, TITLE_MATCH_MAX_CONFIDENCE), 2)
         return result
     except Exception:
         return None
+
+
+TITLE_MATCH_MAX_CONFIDENCE = 0.9
+
+
+def _normalize_title(title):
+    return " ".join(re.findall(r"\w+", title.lower()))
 
 
 def _parse_crossref_item(item):
@@ -321,6 +382,68 @@ def _parse_crossref_item(item):
         "source": "crossref",
         "confidence": 1.0,
     }
+
+
+# ---------------------------------------------------------------------------
+# arXiv API
+# ---------------------------------------------------------------------------
+
+_ARXIV_NS = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+
+
+def arxiv_lookup(arxiv_id):
+    """Look up a preprint by arXiv ID.
+
+    If arXiv lists a DOI for the published version, CrossRef metadata for
+    that DOI is returned instead.
+    """
+    try:
+        r = SESSION.get(ARXIV_API, params={"id_list": arxiv_id}, timeout=15)
+        if r.status_code != 200:
+            return None
+        return _parse_arxiv_response(r.content)
+    except Exception:
+        return None
+
+
+def _parse_arxiv_response(content):
+    root = ET.fromstring(content)
+    entry = root.find("a:entry", _ARXIV_NS)
+    # Unknown IDs come back as an entry without a publication date
+    if entry is None or entry.findtext("a:published", "", _ARXIV_NS) == "":
+        return None
+
+    published_doi = entry.findtext("arxiv:doi", "", _ARXIV_NS).strip()
+    if published_doi:
+        metadata = crossref_lookup_doi(published_doi)
+        if metadata:
+            return metadata
+
+    title = " ".join(entry.findtext("a:title", "", _ARXIV_NS).split())
+    authors = [
+        " ".join(a.findtext("a:name", "", _ARXIV_NS).split())
+        for a in entry.findall("a:author", _ARXIV_NS)
+    ]
+    return {
+        "title": title,
+        "authors": [a for a in authors if a],
+        # First-version date, not the latest revision
+        "year": entry.findtext("a:published", "", _ARXIV_NS)[:4],
+        "journal": "arXiv",
+        "publisher": "",
+        "doi": "",
+        "source": "arxiv",
+        "confidence": 0.95,
+    }
+
+
+def _title_in_text(title, text, threshold=0.8):
+    """Whether most words of `title` appear in `text`."""
+    words = set(_normalize_title(title).split())
+    if not words:
+        return False
+    text_words = set(_normalize_title(text).split())
+    return len(words & text_words) / len(words) >= threshold
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +656,17 @@ def resolve_metadata(pdf_path):
             metadata["confidence"] = 1.0
             return metadata
 
-    # 2. ISBN lookup for books
+    # 2. arXiv preprints
+    if info["arxiv_id"]:
+        metadata = arxiv_lookup(info["arxiv_id"])
+        # An ID found in the text might be a citation; check the title matches
+        if metadata and (
+            not info["arxiv_id_from_text"]
+            or _title_in_text(metadata["title"], info["first_page_text"])
+        ):
+            return metadata
+
+    # 3. ISBN lookup for books
     if info["isbn"]:
         metadata = isbn_lookup(info["isbn"])
         if metadata:
@@ -541,25 +674,25 @@ def resolve_metadata(pdf_path):
 
     title = info.get("title_guess", "")
 
-    # 3. CrossRef free-text search
+    # 4. CrossRef free-text search
     if title:
         metadata = crossref_search_title(title)
         if metadata and metadata.get("confidence", 0) >= 0.5:
             return metadata
 
-    # 4. Semantic Scholar search
+    # 5. Semantic Scholar search
     if title:
         metadata = semantic_scholar_search(title)
         if metadata:
             return metadata
 
-    # 5. Zotero fallback
+    # 6. Zotero fallback
     if title:
         metadata = zotero_search(title)
         if metadata:
             return metadata
 
-    # 6. Manual review needed
+    # 7. Manual review needed
     return {
         "title": title or os.path.splitext(os.path.basename(pdf_path))[0],
         "authors": [],
@@ -597,13 +730,37 @@ def _format_author(authors):
     # Extract last names
     last_names = []
     for a in authors:
-        parts = a.split(",")
-        last_names.append(parts[0].strip())
+        if "," in a:
+            last_names.append(a.split(",")[0].strip())
+        else:
+            # "First Last" form (arXiv, Semantic Scholar, book APIs)
+            last_names.append(a.strip().split()[-1] if a.strip() else a)
     if len(last_names) == 1:
         return last_names[0]
     if len(last_names) == 2:
         return f"{last_names[0]} & {last_names[1]}"
     return f"{last_names[0]} et al."
+
+
+def resolve_template(template):
+    """Turn a preset name or custom template string into a template string.
+
+    Raises ValueError if the template is malformed or uses unknown fields.
+    """
+    tpl = TEMPLATE_PRESETS.get(template, template)
+    try:
+        fields = {f for _, f, _, _ in string.Formatter().parse(tpl) if f is not None}
+    except ValueError as e:
+        raise ValueError(f"Invalid template {tpl!r}: {e}") from None
+    allowed = ", ".join("{%s}" % f for f in TEMPLATE_FIELDS)
+    unknown = fields - set(TEMPLATE_FIELDS)
+    if unknown:
+        bad = ", ".join("{%s}" % f for f in sorted(unknown))
+        raise ValueError(f"Unknown template field(s) {bad}; use {allowed}")
+    if not fields:
+        presets = ", ".join(TEMPLATE_PRESETS)
+        raise ValueError(f"Template {tpl!r} is not a preset ({presets}) and uses none of {allowed}")
+    return tpl
 
 
 def generate_filename(metadata, template=None):
@@ -637,7 +794,19 @@ def generate_filename(metadata, template=None):
 # Scan & Execute
 # ---------------------------------------------------------------------------
 
-def scan_directory(directory, template=None):
+def find_pdfs(directory, recursive=False):
+    """PDF files in `directory` (any extension case), skipping hidden paths."""
+    directory = Path(directory)
+    candidates = directory.rglob("*") if recursive else directory.iterdir()
+    return sorted(
+        p for p in candidates
+        if p.suffix.lower() == ".pdf"
+        and p.is_file()
+        and not any(part.startswith(".") for part in p.relative_to(directory).parts)
+    )
+
+
+def scan_directory(directory, template=None, recursive=False):
     """Scan a directory for PDFs and propose new names."""
     directory = Path(directory)
     if not directory.is_dir():
@@ -646,10 +815,13 @@ def scan_directory(directory, template=None):
     # Resolve template: preset key or custom string
     tpl = None
     if template:
-        tpl = TEMPLATE_PRESETS.get(template, template)
+        try:
+            tpl = resolve_template(template)
+        except ValueError as e:
+            return {"error": str(e)}
 
     results = []
-    pdf_files = sorted(directory.glob("*.pdf"))
+    pdf_files = find_pdfs(directory, recursive=recursive)
 
     for pdf_path in pdf_files:
         metadata = resolve_metadata(str(pdf_path))
@@ -658,6 +830,7 @@ def scan_directory(directory, template=None):
         results.append({
             "original_path": str(pdf_path),
             "original_name": pdf_path.name,
+            "relative_path": str(pdf_path.relative_to(directory)),
             "proposed_name": proposed,
             "metadata": metadata,
             "source": metadata.get("source", "unknown"),
@@ -689,7 +862,9 @@ def execute_renames(files, session_id=None):
             results.append({"original": str(original), "error": "File not found"})
             continue
 
-        if new_path.exists() and new_path != original:
+        # samefile: a case-only rename (x.PDF -> x.pdf) on a case-insensitive
+        # filesystem is not a collision
+        if new_path.exists() and not new_path.samefile(original):
             # Add a numeric suffix to avoid collisions
             stem = new_path.stem
             suffix = new_path.suffix
@@ -742,9 +917,16 @@ def main():
         help="Rename all files without prompting for confirmation",
     )
     parser.add_argument(
-        "--template", choices=list(TEMPLATE_PRESETS.keys()),
-        default=None,
-        help="Naming template preset (default: from settings or 'standard')",
+        "--template", metavar="TEMPLATE", default=None,
+        help=(
+            f"Preset ({', '.join(TEMPLATE_PRESETS)}) or a custom template such as "
+            "'{year}_{author}_{title}' using {author}, {title}, {year}, {journal}, "
+            "{publisher} (default: from settings or 'standard')"
+        ),
+    )
+    parser.add_argument(
+        "--recursive", "-r", action="store_true",
+        help="Also scan subdirectories (files are renamed in place)",
     )
     parser.add_argument(
         "--history", action="store_true",
@@ -822,9 +1004,14 @@ def main():
     directory = os.path.abspath(args.directory)
     if not os.path.isdir(directory):
         parser.error(f"not a directory: {directory}")
+    if args.template:
+        try:
+            resolve_template(args.template)
+        except ValueError as e:
+            parser.error(str(e))
 
     print(f"Scanning {directory} ...")
-    result = scan_directory(directory, template=args.template)
+    result = scan_directory(directory, template=args.template, recursive=args.recursive)
 
     if "error" in result:
         print(f"Error: {result['error']}")
@@ -848,7 +1035,7 @@ def main():
             continue
         name_changed.append(f)
         marker = "*" if conf < 0.5 else " "
-        print(f"  {marker} {orig}")
+        print(f"  {marker} {f['relative_path']}")
         print(f"    -> {proposed}  [{src}, {conf:.0%}]")
 
     if skipped:

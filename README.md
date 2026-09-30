@@ -5,7 +5,7 @@
 ## Why use this?
 
 - **It just works** — drop in a directory path, click Scan, done.
-- **Smart metadata lookup** — pulls from CrossRef, Semantic Scholar, Open Library, and Google Books. DOI and ISBN are extracted straight from the PDF text.
+- **Smart metadata lookup** — pulls from CrossRef, arXiv, Semantic Scholar, Open Library, and Google Books. DOIs, arXiv IDs, and ISBNs are extracted straight from the PDF text.
 - **You stay in control** — review every proposed name before committing. Edit any you want to tweak.
 - **Undo anything** — made a mistake? Revert individual files or entire sessions.
 - **Zotero integration** — optionally sync renamed filenames back to your Zotero library.
@@ -46,8 +46,12 @@ pdf-renamer /path/to/pdfs --yes
 # Preview proposed renames without changing anything
 pdf-renamer /path/to/pdfs --dry-run
 
-# Use a specific naming template
+# Use a specific naming template, or your own
 pdf-renamer /path/to/pdfs --template journal
+pdf-renamer /path/to/pdfs --template "{year}_{author}_{title}"
+
+# Include PDFs in subfolders (each file is renamed where it is)
+pdf-renamer /path/to/pdfs --recursive
 
 # View rename history
 pdf-renamer --history
@@ -65,7 +69,7 @@ Run `pdf-renamer --help` for all options.
 ## How it works (Web UI)
 
 1. Enter a directory path and click **Scan**.
-2. The tool extracts DOIs/ISBNs from each PDF, queries academic APIs, and proposes clean filenames.
+2. The tool extracts DOIs, arXiv IDs, and ISBNs from each PDF, queries academic APIs, and proposes clean filenames. Tick **Include subfolders** to scan nested folders.
 3. Review the table — edit any names you'd like to adjust.
 4. Check the files you want and click **Rename Selected**.
 5. Use the **History** tab to view past renames or undo them.
@@ -97,7 +101,9 @@ Settings (`settings.json`) and rename history (`rename_log.json`) are stored in 
 | macOS | `~/Library/Application Support/pdf-renamer/` |
 | Windows | `%APPDATA%\pdf-renamer\` |
 
-`pdf-renamer --help` prints the exact path. Set `PDF_RENAMER_DATA_DIR` to use a different location. If you run from a git checkout that already has a `data/` folder from an older version, that folder keeps being used so your history is preserved. See `data/settings.example.json` for the settings format.
+`pdf-renamer --help` prints the exact path.
+
+Optionally set `contact_email` in `settings.json` (or the `PDF_RENAMER_EMAIL` environment variable). It's sent to CrossRef with each request, which gets you faster, more reliable responses from CrossRef's "polite" pool. Set `PDF_RENAMER_DATA_DIR` to use a different location. If you run from a git checkout that already has a `data/` folder from an older version, that folder keeps being used so your history is preserved. See `data/settings.example.json` for the settings format.
 
 You can also configure the web server via environment variables:
 
@@ -112,9 +118,12 @@ You can also configure the web server via environment variables:
 ```bash
 git clone https://github.com/bchick/pdf-renamer.git && cd pdf-renamer
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e ".[test]"
 pdf-renamer --help
+pytest
 ```
+
+The tests run offline — all network calls are stubbed.
 
 `python renamer.py ...` and `python app.py` still work from a checkout.
 
@@ -130,6 +139,7 @@ pdf-renamer/
     static/             Styles and frontend logic
   renamer.py, app.py    Shims for running from a checkout
   data/settings.example.json   Settings template
+  tests/                Test suite (pytest)
 ```
 
 ## Requirements

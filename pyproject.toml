@@ -16,6 +16,9 @@ dependencies = [
     "requests>=2.31",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
 [project.scripts]
 pdf-renamer = "pdf_renamer.renamer:main"
 
@@ -27,3 +30,6 @@ version = { attr = "pdf_renamer.__version__" }
 
 [tool.setuptools.package-data]
 pdf_renamer = ["templates/*", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
